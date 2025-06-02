@@ -70,3 +70,56 @@ def push_rendered_chunk_to_hub(
         }
     )
     return dataset_stats
+
+from typing import Dict, Any
+import logging
+import datasets
+import argparse
+
+logger = logging.getLogger(__name__)
+
+def push_rendered_chunk_as_split_to_hub(
+    args: argparse.Namespace,
+    chunk: dict,
+    dataset_stats: dict,
+    current_num_examples: int,
+) -> dict:
+    r"""
+    Pushes a chunk of rendered texts to a separate dataset split on HuggingFace Hub.
+
+    Args:
+        args (`argparse.Namespace`): Must contain repo_id, auth_token, and split_prefix (string prefix for split names)
+        chunk (`dict`): Chunk of data to push as a dataset
+        dataset_stats (`dict`): Dictionary for metadata (you can update it as needed)
+        current_num_examples (`int`): Number of examples processed so far (used for naming split)
+
+    Returns:
+        Updated dataset_stats dictionary
+    """
+    split_name = f"chunk_{current_num_examples // args.chunk_size}"
+
+    import datasets
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.info(f"Pushing batch {current_num_examples // args.chunk_size} as split '{split_name}' to HuggingFace")
+
+    chunk_dataset = datasets.Dataset.from_dict(chunk)
+
+    # Push without unsupported kwargs
+    chunk_dataset.push_to_hub(
+        repo_id=args.repo_id,
+        config_name=split_name,
+        private=False,
+        token=args.auth_token,
+        embed_external_files=True,
+    )
+
+    # Optionally update dataset_stats here, but without new_uploaded_size etc.
+    dataset_stats["total_num_examples"] = current_num_examples
+    dataset_stats["total_num_splits"] = dataset_stats.get("total_num_splits", 0) + 1
+
+    logger.info(f"Finished pushing split '{split_name}'. Total splits pushed: {dataset_stats['total_num_splits']}")
+
+    return dataset_stats
+
