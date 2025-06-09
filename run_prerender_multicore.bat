@@ -8,6 +8,6 @@ python scripts\data\prerendering\prerender_wikipedia_multiprocessing.py ^
   --data_path=%DATASET_FILE% ^
   --chunk_size=150000 ^
   --repo_id="Exqrch/pixel-dataset-prerender-java-wikipedia" ^
-  --split="validation" ^
-  --auth_token="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" ^
+  --split="train" ^
+  --auth_token="ADD TOKEN" ^
   --num_workers 12

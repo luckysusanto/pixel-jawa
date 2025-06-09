@@ -1,2 +1,4 @@
 local_runs/
 Exqrch/
+*.csv
+src/pixel/__pycache__/
