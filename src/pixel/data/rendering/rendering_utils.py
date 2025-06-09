@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 TEXT_RENDERER_NAME = "text_renderer_config.json"
 
-PreTrainedTextRenderer = Union["PyGameTextRenderer", "PangoCairoTextRenderer"]  # noqa: F821
+PreTrainedTextRenderer = "PyGameTextRenderer"  # noqa: F821, , "PangoCairoTextRenderer"
 
 
 @dataclass

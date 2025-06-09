@@ -21,6 +21,13 @@ from typing import Any, Dict, Optional
 
 import datasets
 import torch
+
+if torch.cuda.is_available():
+    for i in range(torch.cuda.device_count()):
+        print(f"Device {i}: {torch.cuda.get_device_name(i)}")
+else:
+    print("No CUDA devices available.")
+
 import transformers
 from datasets import interleave_datasets, load_dataset
 from pixel import (
@@ -64,6 +71,7 @@ class DataTrainingArguments:
     validation_split: str = field(metadata={"help": "Name of the validation dataset split."})
     dataset_caches: Optional[str] = field(default=None, metadata={"help": "Directory where the dataset is cached"})
     train_dataset_configs: str = field(default=None, metadata={"help": "Train dataset config/subset"})
+    validation_dataset_configs: str = field(default=None, metadata={"help": "Train dataset config/subset"})
     max_train_samples: Optional[int] = field(
         default=None,
         metadata={
@@ -203,7 +211,6 @@ class CustomTrainingArguments(TrainingArguments):
         default=1.5e-4, metadata={"help": "Base learning rate: absolute_lr = base_lr * total_batch_size / 256."}
     )
 
-
 def collate_fn(examples):
     pixel_values = torch.stack([example["pixel_values"] for example in examples])
     attention_mask = torch.stack([example["attention_mask"] for example in examples])
@@ -225,7 +232,10 @@ def main(config_dict: Dict[str, Any] = None):
         else:
             model_args, data_args, training_args = parser.parse_args_into_dataclasses()
     else:
+        print("------- Entering with config_dict --------")
         model_args, data_args, training_args = parser.parse_dict(config_dict)
+
+    print(f"From run pretraining <training args>:\n{training_args}")
 
     # Setup logging
     log_level = logging.INFO
@@ -252,7 +262,7 @@ def main(config_dict: Dict[str, Any] = None):
     logger.info(f"Model parameters {model_args}")
 
     # Detecting last checkpoint.
-    last_checkpoint = None
+    # last_checkpoint = os.path.join(os.getcwd(), "..", "..", "model_checkpoints")
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(training_args.output_dir)
         if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
@@ -261,18 +271,20 @@ def main(config_dict: Dict[str, Any] = None):
                 "Use --overwrite_output_dir to overcome."
             )
         elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+            print(f"run_pretraining: Using last checkpoint")
             logger.info(
                 f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
                 "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
             )
 
     # Initialize our datasets
+    print(f"From run_pretraining:\nd_name={data_args.train_dataset_configs}")
     train_datasets = [
         load_dataset(
             d_name,
             d_config,
             split=d_split,
-            use_auth_token=model_args.use_auth_token,
+            # use_auth_token=model_args.use_auth_token,
             streaming=data_args.streaming,
             cache_dir=d_cache,
         )
@@ -300,9 +312,9 @@ def main(config_dict: Dict[str, Any] = None):
             f"\tDataset name = {d_name}, config = {d_config}, split = {d_split}, "
             f"sampling probability = {d_sampling_prob:.3f}, cache = {d_cache}"
         )
-
+    print("DATA ARGS:", data_args)
     validation_dataset = load_dataset(
-        data_args.validation_dataset_name, split=data_args.validation_split, use_auth_token=model_args.use_auth_token
+        data_args.validation_dataset_name, data_args.validation_dataset_configs, split=data_args.validation_split
     )
 
     config_kwargs = {

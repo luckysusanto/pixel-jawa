@@ -27,7 +27,7 @@ from PIL import Image
 from transformers import PreTrainedTokenizer, is_torch_available
 
 from ...utils import Modality, Split, get_attention_mask
-from ..rendering import PyGameTextRenderer, PangoCairoTextRenderer
+from ..rendering import PyGameTextRenderer # , PangoCairoTextRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ if is_torch_available():
         def __init__(
             self,
             data_dir: str,
-            processor: Union[Union[PyGameTextRenderer, PangoCairoTextRenderer], PreTrainedTokenizer],
+            processor: Union[Union[PyGameTextRenderer], PreTrainedTokenizer], # , PangoCairoTextRenderer
             labels: List[str],
             modality: Modality,
             transforms: Optional[Callable] = None,
@@ -177,7 +177,7 @@ def convert_examples_to_image_features(
     examples: List[NERInputExample],
     label_list: List[str],
     max_seq_length: int,
-    processor: Union[PyGameTextRenderer, PangoCairoTextRenderer],
+    processor: Union[PyGameTextRenderer], # , PangoCairoTextRenderer
     transforms: Optional[Callable] = None,
     pad_token_label_id=-100,
 ) -> List[Dict[str, Union[int, torch.Tensor, List[int]]]]:

@@ -1,6 +1,6 @@
 {
-  "config_name": "Team-PIXEL/pixel-base",
-  "text_renderer_name_or_path": "configs/renderers/noto_renderer",
+  "model_name_or_path": "Team-PIXEL/pixel-base",
+  "text_renderer_name_or_path": "configs/renderers/java_renderer",
   "mask_ratio": 0.25,
   "span_masking": true,
   "masking_max_span_length": 6,
