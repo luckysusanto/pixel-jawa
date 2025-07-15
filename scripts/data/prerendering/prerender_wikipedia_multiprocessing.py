@@ -3,7 +3,6 @@ import logging
 import sys
 from PIL import Image
 import pandas as pd
-import ast
 import multiprocessing as mp
 from functools import partial
 from tqdm import tqdm
@@ -53,13 +52,16 @@ def main(args: argparse.Namespace):
 
     df = pd.read_csv(args.data_path)
 
-    # Logic 1: Prerender word-level: [word1, word2, word3, ...]
-    # df["article_script_list"] = df["article_script_list"].apply(ast.literal_eval)
-    # docs = [" ".join(row["article_script_list"]) for _, row in df.iterrows()]
+    # Shuffle and split 99:1
+    df = df.sample(frac=1.0, random_state=42).reset_index(drop=True)
+    split_idx = int(len(df) * 0.99)
+    df_train = df.iloc[:split_idx]
+    df_test = df.iloc[split_idx:]
 
-    # Logi 2: Prerender article-level: "article 1"
-    docs = df[['article_id', 'chunk_id', 'script']].to_dict(orient='records')
-
+    splits = {
+        "train": df_train[['article_id', 'chunk_id', 'script']].to_dict(orient='records'),
+        "test": df_test[['article_id', 'chunk_id', 'script']].to_dict(orient='records'),
+    }
 
     dataset_stats = {
         "total_uploaded_size": 0,
@@ -69,37 +71,41 @@ def main(args: argparse.Namespace):
         "total_num_words": 0,
     }
 
-    data = {"article_id": [], "chunk_id": [], "pixel_values": [], "num_patches": []}
-    idx = 0
+    for split_name, docs in splits.items():
+        logger.info(f"Rendering {split_name} split with {len(docs)} docs...")
 
-    logger.info(f"Rendering with {args.num_workers} workers...")
-    with mp.Pool(args.num_workers) as pool:
-        process_fn = partial(
-            process_single_doc,
-            target_seq_length=target_seq_length,
-            renderer_path=args.renderer_name_or_path,
-            auth_token=args.auth_token,
-        )
-        with tqdm(total=len(docs), desc="Rendering Docs", ncols=100) as pbar:
-            for result_chunks in pool.imap(process_fn, docs, chunksize=10):
-                for article_id, chunk_id, img, patch_count, chunk_text in result_chunks:
-                    idx += 1
-                    data["pixel_values"].append(img)
-                    data["num_patches"].append(patch_count)
-                    data["article_id"].append(article_id)
-                    data["chunk_id"].append(chunk_id)
+        data = {"article_id": [], "chunk_id": [], "pixel_values": [], "num_patches": []}
+        idx = 0
 
-                    dataset_stats["total_num_words"] += len(chunk_text.split(" "))
+        with mp.Pool(args.num_workers) as pool:
+            process_fn = partial(
+                process_single_doc,
+                target_seq_length=target_seq_length,
+                renderer_path=args.renderer_name_or_path,
+                auth_token=args.auth_token,
+            )
+            with tqdm(total=len(docs), desc=f"Rendering {split_name}", ncols=100) as pbar:
+                for result_chunks in pool.imap(process_fn, docs, chunksize=10):
+                    for article_id, chunk_id, img, patch_count, chunk_text in result_chunks:
+                        idx += 1
+                        data["pixel_values"].append(img)
+                        data["num_patches"].append(patch_count)
+                        data["article_id"].append(article_id)
+                        data["chunk_id"].append(chunk_id)
 
-                    if idx % args.chunk_size == 0:
-                        log_example_while_rendering(idx, chunk_text, patch_count)
-                        dataset_stats = push_rendered_chunk_as_split_to_hub(args, data, dataset_stats, idx)
-                        data = {"article_id": [], "chunk_id": [], "pixel_values": [], "num_patches": []}
-                pbar.update(1)
+                        dataset_stats["total_num_words"] += len(chunk_text.split(" "))
 
-    # Final push
-    if data["pixel_values"]:
-        push_rendered_chunk_as_split_to_hub(args, data, dataset_stats, idx)
+                        if idx % args.chunk_size == 0:
+                            log_example_while_rendering(idx, chunk_text, patch_count)
+                            dataset_stats = push_rendered_chunk_as_split_to_hub(
+                                args, data, dataset_stats, idx, split_name=split_name
+                            )
+                            data = {"article_id": [], "chunk_id": [], "pixel_values": [], "num_patches": []}
+                    pbar.update(1)
+
+        # Final push per split
+        if data["pixel_values"]:
+            push_rendered_chunk_as_split_to_hub(args, data, dataset_stats, idx, split_name=split_name)
 
     logger.info(f"Done. Total words: {dataset_stats['total_num_words']}, Total examples: {idx}")
 
@@ -116,10 +122,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--renderer_name_or_path", type=str, required=True)
     parser.add_argument("--data_path", type=str, required=True)
-    parser.add_argument("--chunk_size", type=int, default=150000) # Doing this because there's error with multi-split, so, yeah.
+    parser.add_argument("--chunk_size", type=int, default=150000)
     parser.add_argument("--max_lines", type=int, default=-1)
     parser.add_argument("--repo_id", type=str, required=True)
-    parser.add_argument("--split", type=str, required=True)
+    parser.add_argument("--split", type=str, required=False)  # now unused
     parser.add_argument("--auth_token", type=str, required=True)
     parser.add_argument("--num_workers", type=int, default=12, help="Number of CPU workers")
 
