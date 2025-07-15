@@ -12,7 +12,11 @@ from pixel import PyGameTextRenderer, log_example_while_rendering, push_rendered
 
 logger = logging.getLogger(__name__)
 
-def process_single_doc(doc, target_seq_length, renderer_path, auth_token):
+def process_single_doc(row, target_seq_length, renderer_path, auth_token):
+    doc = row["script"]
+    article_id = row["article_id"]
+    chunk_id = row["chunk_id"]
+
     # Init renderer in subprocess
     text_renderer = PyGameTextRenderer.from_pretrained(renderer_path, use_auth_token=auth_token)
 
@@ -32,10 +36,13 @@ def process_single_doc(doc, target_seq_length, renderer_path, auth_token):
     for chunk in parts:
         encoding = text_renderer(text=chunk)
         chunks.append((
+            article_id,
+            chunk_id,
             Image.fromarray(encoding.pixel_values),
             encoding.num_text_patches,
-            chunk
+            chunk,
         ))
+
     return chunks
 
 def main(args: argparse.Namespace):
@@ -47,11 +54,12 @@ def main(args: argparse.Namespace):
     df = pd.read_csv(args.data_path)
 
     # Logic 1: Prerender word-level: [word1, word2, word3, ...]
-    df["article_script_list"] = df["article_script_list"].apply(ast.literal_eval)
-    docs = [" ".join(row["article_script_list"]) for _, row in df.iterrows()]
+    # df["article_script_list"] = df["article_script_list"].apply(ast.literal_eval)
+    # docs = [" ".join(row["article_script_list"]) for _, row in df.iterrows()]
 
     # Logi 2: Prerender article-level: "article 1"
-    # docs = df['transcription']
+    docs = df[['article_id', 'chunk_id', 'script']].to_dict(orient='records')
+
 
     dataset_stats = {
         "total_uploaded_size": 0,
@@ -61,7 +69,7 @@ def main(args: argparse.Namespace):
         "total_num_words": 0,
     }
 
-    data = {"pixel_values": [], "num_patches": []}
+    data = {"article_id": [], "chunk_id": [], "pixel_values": [], "num_patches": []}
     idx = 0
 
     logger.info(f"Rendering with {args.num_workers} workers...")
@@ -74,16 +82,19 @@ def main(args: argparse.Namespace):
         )
         with tqdm(total=len(docs), desc="Rendering Docs", ncols=100) as pbar:
             for result_chunks in pool.imap(process_fn, docs, chunksize=10):
-                for img, patch_count, chunk_text in result_chunks:
+                for article_id, chunk_id, img, patch_count, chunk_text in result_chunks:
                     idx += 1
                     data["pixel_values"].append(img)
                     data["num_patches"].append(patch_count)
+                    data["article_id"].append(article_id)
+                    data["chunk_id"].append(chunk_id)
+
                     dataset_stats["total_num_words"] += len(chunk_text.split(" "))
 
                     if idx % args.chunk_size == 0:
                         log_example_while_rendering(idx, chunk_text, patch_count)
                         dataset_stats = push_rendered_chunk_as_split_to_hub(args, data, dataset_stats, idx)
-                        data = {"pixel_values": [], "num_patches": []}
+                        data = {"article_id": [], "chunk_id": [], "pixel_values": [], "num_patches": []}
                 pbar.update(1)
 
     # Final push
