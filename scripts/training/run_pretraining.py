@@ -499,53 +499,87 @@ def main(config_dict: Dict[str, Any] = None):
         data_collator=collate_fn,
     )
 
-    # Training
+    # Training - Eval loop
+    import csv
+    actual_epoch_num = int(training_args.num_train_epochs)
+    training_args.num_train_epochs=1
     if training_args.do_train:
         checkpoint = None
         if training_args.resume_from_checkpoint is not None:
             checkpoint = training_args.resume_from_checkpoint
         elif last_checkpoint is not None:
             checkpoint = last_checkpoint
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()
-        # Also save feature extractor together with model and text renderer
-        feature_extractor.save_pretrained(training_args.output_dir)
-        trainer.log_metrics("train", train_result.metrics)
-        trainer.save_metrics("train", train_result.metrics)
-        trainer.save_state()
 
-    # Evaluation
-    # if training_args.do_eval:
-    #     metrics = trainer.evaluate()
-    #     outputs = trainer.prediction_loop(
-    #         dataloader=trainer.get_eval_dataloader(),
-    #         description="Evaluation (manual loss)",
-    #         prediction_loss_only=False,
-    #         return_outputs=True
-    #     )
-    #     print(f"WHAT IS OUTPUT? <{outputs}>")
-    #     metrics = {"eval_loss": outputs.loss.item()}
+        csv_path = os.path.join(training_args.output_dir, "loss_log.csv")
+        best_eval_loss = float("inf")
+        best_model_state = None
+        best_epoch = -1
+        patience = 5
+        patience_counter = 0
 
-    #     trainer.log_metrics("eval", metrics)
-    #     trainer.save_metrics("eval", metrics)
+        with open(csv_path, "w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["epoch", "eval_loss"])
 
-    eval_dataloader = trainer.get_eval_dataloader()
-    eval_loss_list = []
+            for epoch in range(actual_epoch_num):
+                logger.info(f"\n🔁 Starting epoch {epoch + 1}/{int(actual_epoch_num)}")
 
-    model = trainer.model
-    model.eval()
-    device = trainer.args.device
+                train_result = trainer.train(resume_from_checkpoint=checkpoint)
+                checkpoint = None  # Only use once
 
-    for batch in tqdm(eval_dataloader, desc="Evaluating..."):
-        batch = trainer._prepare_inputs(batch)
-        with torch.no_grad():
-            batch = {k: v.to(device) for k, v in batch.items()}
-            outputs = model(**batch)
-            loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
-            eval_loss_list.append(loss.item())
+                # === Evaluation ===
+                if training_args.do_eval:
+                    eval_dataloader = trainer.get_eval_dataloader()
+                    eval_loss_list = []
 
-    avg_eval_loss = sum(eval_loss_list) / len(eval_loss_list)
-    logger.info(f"Eval Loss: {avg_eval_loss}")
+                    model = trainer.model
+                    model.eval()
+                    device = training_args.device
+
+                    for batch in tqdm(eval_dataloader, desc=f"Evaluating epoch {epoch+1}"):
+                        batch = trainer._prepare_inputs(batch)
+                        with torch.no_grad():
+                            batch = {k: v.to(device) for k, v in batch.items()}
+                            outputs = model(**batch)
+                            loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
+                            eval_loss_list.append(loss.item())
+
+                    avg_eval_loss = sum(eval_loss_list) / len(eval_loss_list)
+                    logger.info(f"📉 Eval Loss (epoch {epoch+1}): {avg_eval_loss:.6f}")
+                    writer.writerow([epoch + 1, avg_eval_loss])
+
+                    # Check for improvement
+                    if avg_eval_loss < best_eval_loss:
+                        best_eval_loss = avg_eval_loss
+                        best_epoch = epoch + 1
+                        best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                        patience_counter = 0
+                        logger.info(f"✅ New best model at epoch {epoch + 1} with loss {avg_eval_loss:.6f}")
+                    else:
+                        patience_counter += 1
+                        logger.info(f"⏸ No improvement. Patience: {patience_counter}/{patience}")
+
+                    if patience_counter >= patience:
+                        logger.info(f"🛑 Early stopping triggered at epoch {epoch + 1}")
+                        break
+
+        # === Save last model ===
+        last_model_path = os.path.join(training_args.output_dir, "model_last")
+        trainer.save_model(last_model_path)
+        feature_extractor.save_pretrained(last_model_path)
+        logger.info(f"💾 Last model saved to {last_model_path}")
+
+        # === Save best model ===
+        best_model_path = os.path.join(training_args.output_dir, "model_best")
+        if best_model_state is not None:
+            trainer.model.load_state_dict(best_model_state)
+            trainer.save_model(best_model_path)
+            feature_extractor.save_pretrained(best_model_path)
+            logger.info(f"🏆 Best model (epoch {best_epoch}) saved to {best_model_path}")
+        else:
+            logger.warning("⚠️ No best model was saved. Training might have failed.")
+
+
 
     # Write model card and (optionally) push to hub
     kwargs = {
