@@ -59,7 +59,7 @@ class PIXELTrainer(Trainer):
             loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
 
         print(f"from trainer <Returning Loss:> {loss}")
-        return (loss, outputs) if return_outputs else loss
+        return { "loss": loss, "logits": outputs, }if return_outputs else loss
 
 
 class PIXELTrainerForPretraining(PIXELTrainer):

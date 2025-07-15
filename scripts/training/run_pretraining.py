@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional
 
 import datasets
 import torch
+from tqdm import tqdm
 
 if torch.cuda.is_available():
     for i in range(torch.cuda.device_count()):
@@ -261,7 +262,8 @@ def main(config_dict: Dict[str, Any] = None):
     logger.info(f"Data parameters {data_args}")
     logger.info(f"Model parameters {model_args}")
 
-    # Detecting last checkpoint.
+    # Set last checkpoint if not from scratch
+    last_checkpoint = None
     # last_checkpoint = os.path.join(os.getcwd(), "..", "..", "model_checkpoints")
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(training_args.output_dir)
@@ -513,10 +515,37 @@ def main(config_dict: Dict[str, Any] = None):
         trainer.save_state()
 
     # Evaluation
-    if training_args.do_eval:
-        metrics = trainer.evaluate()
-        trainer.log_metrics("eval", metrics)
-        trainer.save_metrics("eval", metrics)
+    # if training_args.do_eval:
+    #     metrics = trainer.evaluate()
+    #     outputs = trainer.prediction_loop(
+    #         dataloader=trainer.get_eval_dataloader(),
+    #         description="Evaluation (manual loss)",
+    #         prediction_loss_only=False,
+    #         return_outputs=True
+    #     )
+    #     print(f"WHAT IS OUTPUT? <{outputs}>")
+    #     metrics = {"eval_loss": outputs.loss.item()}
+
+    #     trainer.log_metrics("eval", metrics)
+    #     trainer.save_metrics("eval", metrics)
+
+    eval_dataloader = trainer.get_eval_dataloader()
+    eval_loss_list = []
+
+    model = trainer.model
+    model.eval()
+    device = trainer.args.device
+
+    for batch in tqdm(eval_dataloader, desc="Evaluating..."):
+        batch = trainer._prepare_inputs(batch)
+        with torch.no_grad():
+            batch = {k: v.to(device) for k, v in batch.items()}
+            outputs = model(**batch)
+            loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
+            eval_loss_list.append(loss.item())
+
+    avg_eval_loss = sum(eval_loss_list) / len(eval_loss_list)
+    logger.info(f"Eval Loss: {avg_eval_loss}")
 
     # Write model card and (optionally) push to hub
     kwargs = {
